@@ -16,89 +16,93 @@ const GUIDANCE_SCALE: f64 = 7.5;
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// The prompt to be used for image generation.
+    /// 用于生成图像的提示词，又称为咒语、正咒。最好用","做分割，例如：a robot, like spide, red eyes。示例网站https://docs.qq.com/doc/DWFdSTHJtQWRzYk9k
     #[arg(
         long,
         default_value = "A very realistic photo of a rusty robot walking on a sandy beach"
     )]
     prompt: String,
 
+    /// 反向提示词，又称为反咒。生成的图像中会尽量不包含该提示词。例如人类肖像的反咒：lowres, bad anatomy, bad hands, text, error, missing fingers
     #[arg(long, default_value = "")]
     uncond_prompt: String,
 
-    /// Run on CPU rather than on GPU.
+    /// 用CPU而不是GPU
     #[arg(long)]
     cpu: bool,
 
-    /// Enable tracing (generates a trace-timestamp.json file).
+    /// 启用跟踪（生成trace-timestamp.json文件）
     #[arg(long)]
     tracing: bool,
 
-    /// The height in pixels of the generated image.
+    /// 生成图像的高度，单位像素
     #[arg(long)]
     height: Option<usize>,
 
-    /// The width in pixels of the generated image.
+    /// 生成图像的宽度，单位像素
     #[arg(long)]
     width: Option<usize>,
 
-    /// The UNet weight file, in .safetensors format.
+    /// UNet权重文件，格式为.safetensors。
     #[arg(long, value_name = "FILE")]
     unet_weights: Option<String>,
 
-    /// The CLIP weight file, in .safetensors format.
+    /// CLIP权重文件，格式为.safetensors。
     #[arg(long, value_name = "FILE")]
     clip_weights: Option<String>,
 
-    /// The VAE weight file, in .safetensors format.
+    /// VAE权重文件，格式为.safetensors。
     #[arg(long, value_name = "FILE")]
     vae_weights: Option<String>,
 
+    /// 器文件，用于分词。格式为.json。
     #[arg(long, value_name = "FILE")]
-    /// The file specifying the tokenizer to used for tokenization.
     tokenizer: Option<String>,
 
-    /// The size of the sliced attention or 0 for automatic slicing (disabled by default)
+    /// 切片注意力的大小，或0表示自动切片（默认禁用）
     #[arg(long)]
     sliced_attention_size: Option<usize>,
 
-    /// The number of steps to run the diffusion for.
+    /// 运行SD的步数。很重要，某些模型22步更好，更少的步数也会更快完成。但是步数太少也会导致图像完全不可用。
     #[arg(long, default_value_t = 30)]
     n_steps: usize,
 
-    /// The number of samples to generate.
+    /// 要生成的样本数。就是你要生成几张图。
     #[arg(long, default_value_t = 1)]
     num_samples: i64,
 
-    /// The name of the final image to generate.
+    /// 要生成的最终图像的名称。
     #[arg(long, value_name = "FILE", default_value = "sd_final.png")]
     final_image: String,
 
+    /// 用于生成图像的模型版本。有vwaifu、v1-5、v2-1、xl四个版本可选。默认是v2.1。vwaifu是我增加的二次元版本（anything-5），其他是官方版本
     #[arg(long, value_enum, default_value = "v2-1")]
     sd_version: StableDiffusionVersion,
 
-    /// Generate intermediary images at each step.
+    /// 在每一步生成中间图像。没啥用且占IO，但是如果你想
     #[arg(long, action)]
     intermediary_images: bool,
 
+    /// 使用flash_attn加速。默认是false。
     #[arg(long)]
     use_flash_attn: bool,
 
+    /// 使用f16而不是f32。默认是false。半精度会生成的更快，但是质量可能会有影响，同时这也需要模型本身支持。anything-5不支持
     #[arg(long)]
     use_f16: bool,
 
+    /// 图像生成图像，这里是图像路径
     #[arg(long, value_name = "FILE")]
     img2img: Option<String>,
 
-    /// The strength, indicates how much to transform the initial image. The
-    /// value must be between 0 and 1, a value of 1 discards the initial image
-    /// information.
+    /// img2img强度，表示要转换初始图像的程度。该值必须介于0和1之间，值为1会丢弃初始图像信息。
     #[arg(long, default_value_t = 0.8)]
     img2img_strength: f64,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, PartialEq, Eq)]
 enum StableDiffusionVersion {
+    Vwaifu,
     V1_5,
     V2_1,
     Xl,
@@ -117,6 +121,7 @@ enum ModelFile {
 impl StableDiffusionVersion {
     fn repo(&self) -> &'static str {
         match self {
+            Self::Vwaifu => "stablediffusionapi/anything-v5",
             Self::Xl => "stabilityai/stable-diffusion-xl-base-1.0",
             Self::V2_1 => "stabilityai/stable-diffusion-2-1",
             Self::V1_5 => "runwayml/stable-diffusion-v1-5",
@@ -125,7 +130,7 @@ impl StableDiffusionVersion {
 
     fn unet_file(&self, use_f16: bool) -> &'static str {
         match self {
-            Self::V1_5 | Self::V2_1 | Self::Xl => {
+            Self::Vwaifu | Self::V1_5 | Self::V2_1 | Self::Xl => {
                 if use_f16 {
                     "unet/diffusion_pytorch_model.fp16.safetensors"
                 } else {
@@ -137,7 +142,7 @@ impl StableDiffusionVersion {
 
     fn vae_file(&self, use_f16: bool) -> &'static str {
         match self {
-            Self::V1_5 | Self::V2_1 | Self::Xl => {
+            Self::Vwaifu | Self::V1_5 | Self::V2_1 | Self::Xl => {
                 if use_f16 {
                     "vae/diffusion_pytorch_model.fp16.safetensors"
                 } else {
@@ -149,7 +154,7 @@ impl StableDiffusionVersion {
 
     fn clip_file(&self, use_f16: bool) -> &'static str {
         match self {
-            Self::V1_5 | Self::V2_1 | Self::Xl => {
+            Self::Vwaifu | Self::V1_5 | Self::V2_1 | Self::Xl => {
                 if use_f16 {
                     "text_encoder/model.fp16.safetensors"
                 } else {
@@ -161,7 +166,7 @@ impl StableDiffusionVersion {
 
     fn clip2_file(&self, use_f16: bool) -> &'static str {
         match self {
-            Self::V1_5 | Self::V2_1 | Self::Xl => {
+            Self::Vwaifu | Self::V1_5 | Self::V2_1 | Self::Xl => {
                 if use_f16 {
                     "text_encoder_2/model.fp16.safetensors"
                 } else {
@@ -186,7 +191,7 @@ impl ModelFile {
                 let (repo, path) = match self {
                     Self::Tokenizer => {
                         let tokenizer_repo = match version {
-                            StableDiffusionVersion::V1_5 | StableDiffusionVersion::V2_1 => {
+                            StableDiffusionVersion::Vwaifu | StableDiffusionVersion::V1_5 | StableDiffusionVersion::V2_1 => {
                                 "openai/clip-vit-base-patch32"
                             }
                             StableDiffusionVersion::Xl => {
@@ -376,6 +381,9 @@ fn run(args: Args) -> Result<()> {
 
     let dtype = if use_f16 { DType::F16 } else { DType::F32 };
     let sd_config = match sd_version {
+        StableDiffusionVersion::Vwaifu => {
+            stable_diffusion::StableDiffusionConfig::v1_5(sliced_attention_size, height, width)
+        }
         StableDiffusionVersion::V1_5 => {
             stable_diffusion::StableDiffusionConfig::v1_5(sliced_attention_size, height, width)
         }
